@@ -1,6 +1,6 @@
-# 🌟 Lumi
+# 🌟 Lumi Kids
 
-**Lumi** é um web app educacional leve que utiliza Inteligência Artificial
+**Lumi kids** é um web app educacional leve que utiliza Inteligência Artificial
 para auxiliar crianças de 7 a 11 anos no aprendizado de conteúdos do
 ensino fundamental, de forma acessível, segura e inclusiva.
 
