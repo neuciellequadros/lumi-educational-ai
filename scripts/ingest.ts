@@ -1,9 +1,11 @@
 import fs from "fs";
 import path from "path";
 import crypto from "crypto";
-import natural from "natural";
 
 type Chunk = { id: string; source: string; text: string };
+
+const OLLAMA_HOST = process.env.OLLAMA_HOST || "http://127.0.0.1:11434";
+const EMBED_MODEL = process.env.OLLAMA_EMBED_MODEL || "nomic-embed-text";
 
 function walk(dir: string): string[] {
   const entries = fs.readdirSync(dir, { withFileTypes: true });
@@ -33,6 +35,24 @@ function hashId(input: string) {
   return crypto.createHash("sha1").update(input).digest("hex").slice(0, 16);
 }
 
+async function ollamaEmbed(prompt: string): Promise<number[]> {
+  const res = await fetch(`${OLLAMA_HOST}/api/embeddings`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ model: EMBED_MODEL, prompt }),
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Ollama embeddings falhou: ${res.status} ${text}`);
+  }
+
+  const data = (await res.json()) as { embedding: number[] };
+  if (!Array.isArray(data.embedding))
+    throw new Error("Resposta inválida do Ollama embeddings.");
+  return data.embedding;
+}
+
 async function main() {
   const docsDir = path.join(process.cwd(), "docs");
   const dataDir = path.join(process.cwd(), "data");
@@ -57,27 +77,51 @@ async function main() {
     JSON.stringify({ createdAt: new Date().toISOString(), chunks }, null, 2)
   );
 
-  // TF-IDF index (offline, zero modelo)
-  const TfIdf = natural.TfIdf;
-  const tfidf = new TfIdf();
-  chunks.forEach((c) => tfidf.addDocument(c.text));
+  if (chunks.length === 0) {
+    console.log(
+      "⚠️ Nenhum chunk encontrado em /docs. Adicione .md e rode novamente."
+    );
+    return;
+  }
 
-  // Persistimos apenas o necessário: o texto já fica em chunks.json.
-  // Aqui salvamos "N" para validar integridade e reuso.
+  console.log(`🪲✨ Gerando embeddings com Ollama (${EMBED_MODEL})...`);
+  const first = await ollamaEmbed(chunks[0].text);
+  const dim = first.length;
+
+  const all = new Float32Array(chunks.length * dim);
+  all.set(Float32Array.from(first), 0);
+
+  for (let i = 1; i < chunks.length; i++) {
+    if (i % 10 === 0) console.log(`  ... ${i}/${chunks.length}`);
+    const emb = await ollamaEmbed(chunks[i].text);
+    if (emb.length !== dim)
+      throw new Error(`Dimensão mudou: esperado ${dim}, veio ${emb.length}`);
+    all.set(Float32Array.from(emb), i * dim);
+  }
+
   fs.writeFileSync(
-    path.join(dataDir, "tfidf.json"),
+    path.join(dataDir, "embeddings.bin"),
+    Buffer.from(all.buffer)
+  );
+  fs.writeFileSync(
+    path.join(dataDir, "meta.json"),
     JSON.stringify(
-      { createdAt: new Date().toISOString(), count: chunks.length },
+      {
+        createdAt: new Date().toISOString(),
+        count: chunks.length,
+        dim,
+        embedModel: EMBED_MODEL,
+        ollamaHost: OLLAMA_HOST,
+      },
       null,
       2
     )
   );
 
-  console.log(`✅ chunks: ${chunks.length}`);
-  console.log(`✅ gerado: data/chunks.json + data/tfidf.json`);
-  console.log(
-    `✨ Dica: se quiser modo IA offline completo, instale Ollama (opcional).`
-  );
+  console.log("✅ Pronto! Gerado:");
+  console.log(" - data/chunks.json");
+  console.log(" - data/embeddings.bin");
+  console.log(" - data/meta.json");
 }
 
 main().catch((e) => {

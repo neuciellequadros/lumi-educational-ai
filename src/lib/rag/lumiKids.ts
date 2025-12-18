@@ -1,44 +1,48 @@
-import { searchTopK } from "./runtime";
+import { searchTopKEmbeddings } from "./embStore";
 
-export function kidsTemplateAnswer(question: string, chunksText: string) {
-  const resumo = chunksText.trim() ? chunksText.trim().slice(0, 550) : "";
-
+export function kidsTemplateAnswer(chunksText: string) {
+  const resumo = chunksText.trim() ? chunksText.trim().slice(0, 600) : "";
   if (!resumo) {
     return (
-      "Humm… eu não achei isso na minha biblioteca ainda 🪲✨\n\n" +
-      "1) Explicação: Eu não tenho certeza, mas posso te ajudar a procurar com um professor ou responsável.\n" +
-      "2) Exemplo: Você pode perguntar: “Você pode me explicar isso com um exemplo?”\n" +
-      "3) Sua vez: Qual matéria é? (Matemática, Português ou Ciências)"
+      "Opa! Eu não achei isso na minha biblioteca ainda 🪲🟡✨\n\n" +
+      "1) Explicação: Eu não tenho certeza… mas posso te ajudar a procurar com um adulto.\n" +
+      "2) Exemplo: Tente me dizer qual matéria é (Matemática, Português ou Ciências).\n" +
+      "3) Sua vez: Qual série você está? (1º ao 5º)"
     );
   }
 
+  const exemploLinha =
+    resumo.split("\n").find((l) => l.toLowerCase().includes("exemplo")) ??
+    "Exemplo: vamos fazer juntinhos um passo por vez!";
+
   return (
-    "Certo! Vamos aprender juntinhos 🪲✨\n\n" +
+    "Oba! Vamos aprender no Mundo do Vagalume 🪲🟡✨\n\n" +
     "1) Explicação bem simples:\n" +
     resumo.split("\n").slice(0, 3).join("\n") +
     "\n\n2) Um exemplo bem fácil:\n" +
-    (resumo.split("\n").find((l) => l.toLowerCase().includes("exemplo")) ??
-      "Exemplo: vamos fazer um passo por vez!") +
+    exemploLinha +
     "\n\n3) Sua vez:\n" +
-    "Você consegue me dizer com suas palavras o que entendeu?"
+    "Você quer tentar um exercício rapidinho?"
   );
 }
 
 export async function answerWithAutoMode(message: string) {
-  const chunks = await searchTopK(message, 4);
+  const chunks = await searchTopKEmbeddings(message, 4);
   const contexto = chunks
     .map((c, i) => `Trecho ${i + 1} (${c.source})\n${c.text}`)
     .join("\n\n");
 
-  // tenta Ollama (se existir). Se falhar, cai no rag-only.
   try {
     const { ChatOllama } = await import(
       "@langchain/community/chat_models/ollama"
     );
-    const model = new ChatOllama({ model: "llama3.1", temperature: 0.4 });
+    const model = new ChatOllama({
+      model: process.env.OLLAMA_LLM_MODEL || "llama3.1",
+      temperature: 0.4,
+    });
 
     const prompt = `
-Você é o Vagalume Professor 🪲✨ para crianças de 7 a 11 anos (1º ao 5º ano).
+Você é o Vagalume Professor 🪲🟡✨, para crianças de 7 a 11 anos (1º ao 5º ano).
 Fale em português do Brasil.
 Responda SEMPRE em 3 partes:
 1) Explicação simples (máx 4 linhas)
@@ -56,10 +60,7 @@ ${message}
     const resp = await model.invoke(prompt);
     return { answer: String(resp.content ?? ""), sources: chunks };
   } catch {
-    const answer = kidsTemplateAnswer(
-      message,
-      chunks.map((c) => c.text).join("\n\n")
-    );
+    const answer = kidsTemplateAnswer(chunks.map((c) => c.text).join("\n\n"));
     return { answer, sources: chunks };
   }
 }
